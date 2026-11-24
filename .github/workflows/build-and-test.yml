@@ -1,0 +1,81 @@
+
+name: Build and Run TaskManager Application
+
+on:
+  push:
+    paths:
+      - '**/*.java'
+  pull_request:
+    paths:
+      - '**/*.java'
+  workflow_dispatch:
+
+jobs:
+
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Run Maven Tests
+        run: mvn -B -f pom.xml test
+
+  build-and-run:
+    needs: test
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: taskmanager_db
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d taskmanager_db"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Build with Maven
+        run: mvn -B -f pom.xml clean package -DskipTests
+
+      - name: Run Spring Boot Application
+        run: |
+          nohup java -jar target/M8Project-0.0.1-SNAPSHOT.jar > app.log 2>&1 &
+          echo $! > springboot.pid
+
+          for i in {1..30}; do
+            if ! kill -0 "$(cat springboot.pid)" 2>/dev/null; then
+              cat app.log
+              exit 1
+            fi
+            sleep 2
+          done
+
+      - name: Shutdown Spring Boot Application
+        if: always()
+        run: |
+          if [ -f springboot.pid ]; then
+            kill "$(cat springboot.pid)" || true
+          fi
